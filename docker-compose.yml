@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vietbus_backend
+    restart: always
+    ports:
+      - "9000:9000"
+    # Inject environment variables from .env file
+    env_file:
+      - ./backend/.env
+    volumes:
+      # Mount code for hot reload without rebuilding
+      - ./backend:/app/backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vietbus_frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    environment:
+      # Specify API URL pointing to backend
+      VITE_API_URL: http://backend:9000
+    volumes:
+      # Hot reload for frontend
+      - ./frontend/src:/app/src
