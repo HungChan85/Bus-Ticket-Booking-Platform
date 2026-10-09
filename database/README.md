@@ -1,125 +1,90 @@
-# VietBus Database Documentation
+# PostgreSQL database and migrations
 
-This document provides an overview of all stored procedures, functions, triggers, and events implemented in the VietBus booking system database that are actively used by the backend application.
+The demo uses PostgreSQL 17, provided by Docker Compose. Database state lives in the `postgres_data` named volume. No cloud endpoint or CA certificate is required.
 
----
+## Lifecycle
 
-## Table of Contents
-- [Entity Relationship Diagram](#entity-relationship-diagram)
-- [Stored Procedures](#stored-procedures)
-- [Functions](#functions)
-- [Triggers](#triggers)
-- [Events](#events)
+`docker compose up --build -d --wait` waits for PostgreSQL's healthcheck, then runs `python database/manage.py init` in the one-shot `db-init` service. The API starts only after initialization succeeds. Compose startup dependencies follow the [official Docker documentation](https://docs.docker.com/compose/how-tos/startup-order/).
 
----
+`init` applies SQL migrations, then seeds demo data. The API also refreshes upcoming trips at startup, daily at midnight, and trip statuses once per minute. All business times use `Asia/Ho_Chi_Minh`. Existing trips and booking history are retained.
 
-## Entity Relationship Diagram
+## Commands
 
-The following diagram illustrates the database schema and relationships between all entities in the VietBus system:
+Run from the repository root:
 
-![Entity Relationship Diagram](Entity-relationship-diagram.png)
+```bash
+docker compose run --rm db-init python database/manage.py init
+docker compose run --rm db-init python database/manage.py migrate
+docker compose run --rm db-init python database/manage.py seed
+docker compose run --rm db-init python database/manage.py status
+```
 
-### Key Relationships
+With Python dependencies installed locally, use `python database/manage.py <command>`. The connection comes from `backend/.env`, environment variables or `DATABASE_URL`; see [backend/.env.example](../backend/.env.example).
 
-- **Account → Person**: One-to-one relationship (each account has one person record)
-- **Person → Passenger/Staff**: One-to-one specialization (person is either passenger or staff)
-- **Operator → Station/Staff/Routes**: One-to-many (operator manages multiple entities)
-- **Route → Trip**: One-to-many (route can have multiple scheduled trips)
-- **Trip → Ticket**: One-to-many (trip can have multiple tickets)
-- **Booking → Ticket**: One-to-many (booking can contain multiple tickets)
-- **Bus → Trip**: One-to-many (bus can be assigned to multiple trips)
-- **Fare → Route**: Many-to-one (multiple fare rules can apply to one route)
+## Adding a migration
 
----
+1. Create the next numbered UTF-8 file in `database/migrations/`, for example `003_add_booking_index.sql`.
+2. Write PostgreSQL DDL/data changes without `CREATE DATABASE`, `BEGIN`, `COMMIT` or psql meta commands. The runner owns the transaction. Operations that require running outside a transaction, such as `CREATE INDEX CONCURRENTLY`, are not supported by this runner.
+3. Run `migrate`. If using Docker, rebuild `db-init` to include the new file: `docker compose build db-init`.
+4. Inspect `status` and run integration tests.
 
-## Stored Procedures
+The runner records each filename, SHA-256 checksum and timestamp in `schema_migrations`. Applied files must remain immutable; use another migration for subsequent changes. Windows/Linux line endings are normalized before hashing.
 
-### Account Management
+A PostgreSQL advisory lock prevents concurrent migration runners from applying changes twice. Pending migrations and their history entries are committed atomically. An error rolls back the pending batch and stops startup; previously applied migrations are preserved. Migrations are forward-only; no automatic downgrade command is provided.
 
-| Procedure Name | Input Parameters | Output Parameters | Purpose |
-|----------------|------------------|-------------------|---------|
-| `sp_create_passenger_account` | `p_name` (VARCHAR), `p_dob` (DATE), `p_gov_id` (VARCHAR), `p_email` (VARCHAR), `p_phone` (VARCHAR) | `o_passenger_id` (INT) | Creates a complete passenger account with account, person, and passenger records. Validates email/phone uniqueness. Used during customer registration. |
-| `sp_create_staff_account` | `p_name` (VARCHAR), `p_dob` (DATE), `p_gov_id` (VARCHAR), `p_email` (VARCHAR), `p_phone` (VARCHAR), `p_hire_date` (DATE), `p_operator_id` (VARCHAR) | `o_staff_id` (INT) | Creates a complete staff account with account, person, and staff records. Validates operator existence and email/phone uniqueness. Used during staff onboarding. |
+## Current schema
 
-### Trip Management
+- `001_initial_schema.sql`: tables, identities, foreign keys, checks, indexes and seed history.
+- `002_business_logic.sql`: PostgreSQL functions and the arrival/cancellation trigger.
 
-| Procedure Name | Input Parameters | Output Parameters | Purpose |
-|----------------|------------------|-------------------|---------|
-| `sp_schedule_trip` | `p_service_date` (DATETIME), `p_bus_id` (INT), `p_route_id` (INT) | `o_trip_id` (INT) | Schedules a new trip by validating bus availability (must be 'Active'), route existence, and creating the trip record with 'Scheduled' status. Used by admin to create new trips. |
+The core relationships follow the [original ER diagram](Entity-relationship-diagram.png). Changes from the former schema include string phone/government/tax IDs (preserving leading zeroes), `bus.operator_id`, the arrival-station foreign key, unique email/phone, `booking.created_at` and generated unique ticket serial numbers.
 
-### Booking & Ticketing
+Only active tickets (`Issued`/`Used`) occupy a unique `(trip_id, seat_code)`. Refunded/cancelled tickets remain in history and allow the seat to be booked again.
 
-| Procedure Name | Input Parameters | Output Parameters | Purpose |
-|----------------|------------------|-------------------|---------|
-| `sp_create_booking_with_tickets` | `p_currency` (VARCHAR), `p_account_id` (INT), `p_operator_id` (VARCHAR), `p_trip_id` (INT), `p_fare_id` (INT), `p_seat_list` (JSON), `p_qr_code_link` (VARCHAR) | `o_booking_id` (INT) | Creates a booking and multiple tickets in a single transaction. Validates seat availability using `fn_get_available_seats`, checks seat conflicts, validates fare-route matching, and calculates total amount using `fn_calculate_booking_total`. Used during ticket purchase. |
+## Database functions and triggers
 
----
+The API calls PostgreSQL functions with `SELECT`; ID-returning functions replace the former output-parameter procedures.
 
-## Functions
+| Function | Purpose |
+| --- | --- |
+| `sp_create_passenger_account` | Create account, person and passenger atomically |
+| `sp_create_staff_account` | Create account, person and staff atomically |
+| `sp_schedule_trip` | Validate active bus/route and return the new trip ID |
+| `sp_create_booking_with_tickets` | Validate trip, fare, operator and seats; create booking/tickets; return booking ID |
+| `sp_refund_ticket` | Refund an issued ticket and recalculate booking total |
+| `fn_get_available_seats` | Count capacity minus active tickets |
+| `fn_calculate_booking_total` | Sum non-refunded, non-cancelled tickets |
 
-| Function Name | Input Parameters | Return Type | Purpose |
-|---------------|------------------|-------------|---------|
-| `fn_get_available_seats` | `p_trip_id` (INT) | INT | Calculates the number of available seats for a trip by subtracting booked/used seats from total bus capacity. Only counts tickets with status 'Used' or 'Issued'. Used extensively in trip listings and booking validation. |
-| `fn_calculate_booking_total` | `p_booking_id` (INT) | INT | Calculates the total amount for a booking by summing all ticket prices, excluding cancelled or refunded tickets. Used to update booking totals after ticket modifications. |
+`trg_trip_arrival_and_cancellation` calculates arrival time at insertion and when route/departure changes; it blocks cancellation while issued tickets exist.
 
----
+The booking function locks the trip row, checks available capacity and duplicate/taken seat codes, then creates the entire booking in the caller's transaction. A partial unique index also prevents concurrent duplicate seats. Exceptions roll back the complete transaction.
 
-## Triggers
+The former MySQL event scheduler is replaced by `backend/trip_maintenance.py` using APScheduler. It can be disabled with `ENABLE_DEMO_SCHEDULER=0` when running the backend locally.
 
-### Auto-Generated Values
+## Demo seed
 
-| Trigger Name | Event | Table | Purpose |
-|--------------|-------|-------|---------|
-| `trg_operator_before_insert` | BEFORE INSERT | `operator` | Auto-generates sequential operator IDs with format 'OP001', 'OP002', etc. Finds the highest existing number and increments by 1. |
-| `trg_ticket_before_insert_generate_serial` | BEFORE INSERT | `ticket` | Generates a random 8-digit serial number (10000000-99999999) for each ticket. Used for ticket identification and verification. |
+`seed.py` inserts five accounts with bcrypt passwords, three operators, six stations, seven buses, nine routes, valid fares, upcoming trips and a sample two-ticket booking. Credentials and a sample ticket lookup are listed in the [root README](../README.md).
 
-### Business Rule Enforcement
+A transaction and advisory lock protect seeding. The `demo-v1` entry in `seed_history` marks completion. Further runs preserve existing accounts/passwords, tickets, bookings and other edits, while adding upcoming trips. Fleet selection uses the route's operator; cancelled trips are preserved.
 
-| Trigger Name | Event | Table | Purpose |
-|--------------|-------|-------|---------|
-| `trg_trip_before_update_check_tickets` | BEFORE UPDATE | `trip` | Prevents trip cancellation if there are active (issued) tickets. Ensures business rule that tickets must be refunded or rebooked before cancelling a trip. Throws error if violation detected. |
+The seed does not import the expired cloud database. It creates a fresh local demo dataset.
 
-### Derived Column Updates
+## Reset and inspection
 
-| Trigger Name | Event | Table | Purpose |
-|--------------|-------|-------|---------|
-| `trg_trip_before_insert_set_arrival` | BEFORE INSERT | `trip` | Automatically calculates and sets the `arrival_datetime` by adding the route's default duration to the service date. Ensures consistent arrival time prediction. |
-| `trg_trip_before_update_set_arrival` | BEFORE UPDATE | `trip` | Recalculates `arrival_datetime` when `service_date` or `route_id` changes. Maintains accurate arrival time estimates when trip details are modified. |
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose logs db-init
+```
 
----
+To discard **all database data in this project's Compose volume** and start fresh:
 
-## Events
+```bash
+docker compose down -v
+docker compose up --build -d --wait
+```
 
-| Event Name | Schedule | Purpose |
-|------------|----------|---------|
-| `ev_auto_update_trip_status` | Every 1 minute | Automatically updates trip status based on current time: <br>- `Scheduled`: NOW() < service_date <br>- `Departed`: service_date ≤ NOW() < arrival_datetime <br>- `Arrived`: NOW() ≥ arrival_datetime <br>Does not affect 'Cancelled' trips. Keeps trip status synchronized with real-time without manual intervention. |
+Tests create temporary databases with names beginning `vietbus_test_` and remove them after each test. Run:
 
----
-
-## Usage Notes
-
-### Backend Integration
-All stored procedures, functions, triggers, and events listed above are actively used by the Flask backend application:
-
-- **Authentication Routes** (`auth.py`): Uses `sp_create_passenger_account` and `sp_create_staff_account`
-- **Booking Routes** (`booking.py`): Uses `sp_create_booking_with_tickets`
-- **Trip Routes** (`trips.py`): Uses `sp_schedule_trip` and `fn_get_available_seats`
-- **Schedule Routes** (`schedule.py`): Uses `fn_get_available_seats` and `fn_calculate_booking_total`
-- **Admin Routes** (`admin.py`): Uses various procedures for management operations
-
-### Transaction Safety
-All multi-step procedures use `START TRANSACTION` and `COMMIT` to ensure data consistency. Errors trigger automatic rollback through MySQL's transaction handling.
-
-### Error Handling
-Procedures use `SIGNAL SQLSTATE '45000'` to throw custom errors with descriptive messages when:
-- Required records don't exist
-- Business rules are violated
-- Data conflicts are detected
-- Invalid input is provided
-
-These errors are caught and handled by the backend application's error handling middleware.
-
----
-
-## Database Schema Version
-Last Updated: January 31, 2026
+```bash
+docker compose run --rm db-init python -m unittest discover -s backend/tests -v
+```

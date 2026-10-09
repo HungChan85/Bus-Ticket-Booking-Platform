@@ -61,12 +61,8 @@ def create_app(config_object: object | None = None) -> Flask:
     def health():
         try:
             # create a lightweight query to check database connectivity
-            cnx = db_connection()
-            cursor = cnx.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            cursor.close()
-            cnx.close()
+            with db_connection() as cnx:
+                cnx.execute("SELECT 1").fetchone()
             return jsonify({"status": "ok", "db": "connected"})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)}), 500

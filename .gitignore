@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+**/node_modules/
+**/__pycache__/
+**/.venv/
+**/venv/
+frontend/dist/
+.pytest_cache/
+*.pyc
+.docker-build.log
+.postgres-tests.log
+.clone-check.log

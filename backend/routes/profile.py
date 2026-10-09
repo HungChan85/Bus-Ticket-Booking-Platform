@@ -1,7 +1,7 @@
 """Profile routes for getting user account info and tickets"""
 
 from flask import Blueprint, request, jsonify
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 
 profile_bp = Blueprint('profile', __name__, url_prefix='/api/profile')
 
@@ -26,7 +26,7 @@ def get_user_profile(account_id):
     """
     try:
         connection = db_connection()
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor(row_factory=dict_row)
         
         # Query to get account and person information
         query = """
@@ -110,7 +110,7 @@ def get_user_tickets(account_id):
     """
     try:
         connection = db_connection()
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor(row_factory=dict_row)
         
         # Query to get all tickets with trip and booking information
         query = """
@@ -132,7 +132,7 @@ def get_user_tickets(account_id):
                 o.brand_name as operator_brand,
                 dep_station.city as departure_city,
                 arr_station.city as arrival_city,
-                DATE(bk.booking_id) as booking_date
+                DATE(bk.created_at) as booking_date
             FROM ticket t
             INNER JOIN trip tr ON t.trip_id = tr.trip_id
             INNER JOIN booking bk ON t.booking_id = bk.booking_id

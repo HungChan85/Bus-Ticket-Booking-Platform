@@ -19,6 +19,10 @@ EXPOSE 9000
 
 # Set environment variable for Python to recognize modules from root directory
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+COPY database ./database
 
 # Run the server
 CMD ["python", "backend/app.py"]

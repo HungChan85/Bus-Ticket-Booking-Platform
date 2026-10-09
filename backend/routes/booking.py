@@ -1,7 +1,7 @@
 """Booking routes for creating bookings and tickets"""
 
 from flask import Blueprint, request, jsonify
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 import json
 
 booking_bp = Blueprint('booking', __name__, url_prefix='/api/bookings')
@@ -23,7 +23,7 @@ def create_booking_with_tickets():
     }
     """
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         
         # Validate required fields
         required_fields = ['currency', 'account_id', 'operator_id', 'trip_id', 'fare_id', 'seat_list']
@@ -52,11 +52,10 @@ def create_booking_with_tickets():
         conn = db_connection()
         cursor = conn.cursor()
         
-        # Convert seat_list to JSON string for MySQL
+        # Pass the selected seats to the PostgreSQL function as JSONB.
         seat_list_json = json.dumps(seat_list)
         
-        # Call stored procedure
-        cursor.callproc('sp_create_booking_with_tickets', [
+        cursor.execute("SELECT sp_create_booking_with_tickets(%s, %s::integer, %s, %s::integer, %s::integer, %s::jsonb, %s)", (
             currency,
             account_id,
             operator_id,
@@ -64,11 +63,7 @@ def create_booking_with_tickets():
             fare_id,
             seat_list_json,
             qr_code_link,
-            0  # OUT parameter placeholder
-        ])
-        
-        # Get the OUT parameter (booking_id)
-        cursor.execute("SELECT @_sp_create_booking_with_tickets_7 AS booking_id")
+        ))
         result = cursor.fetchone()
         booking_id = result[0] if result else None
         
@@ -118,7 +113,9 @@ def create_booking_with_tickets():
         error_message = str(e)
         print(f"Error in create_booking_with_tickets: {error_message}")
         
-        # Check for specific MySQL errors
+        if 'conn' in locals():
+            conn.rollback()
+        # Map database business rule failures to client errors.
         if 'Not enough available seats' in error_message:
             return jsonify({
                 'success': False,
@@ -134,6 +131,10 @@ def create_booking_with_tickets():
                 'success': False,
                 'message': 'Thông tin chuyến xe hoặc giá vé không hợp lệ'
             }), 400
+        elif any(message in error_message for message in (
+            'Invalid seat', 'Duplicate seat', 'does not match', 'not valid', 'not available',
+        )):
+            return jsonify({'success': False, 'message': error_message.splitlines()[0]}), 400
         else:
             return jsonify({
                 'success': False,
@@ -154,7 +155,7 @@ def get_booking_details(booking_id):
     """
     try:
         conn = db_connection()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor(row_factory=dict_row)
         
         # Get booking info with tickets
         cursor.execute("""

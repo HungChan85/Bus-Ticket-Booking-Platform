@@ -1,7 +1,7 @@
 """Ticket routes for Page 4 - Ticket Lookup"""
 
 from flask import Blueprint, request, jsonify
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 
 ticket_bp = Blueprint('ticket', __name__, url_prefix='/api/tickets')
 
@@ -11,8 +11,10 @@ def lookup_ticket():
     Tra cứu thông tin vé thông qua serial number và số điện thoại
     Page 4 requirement
     """
+    conn = None
+    cursor = None
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         serial_number = data.get('serial_number')
         phone = data.get('phone')
         if not serial_number or not phone:
@@ -24,7 +26,7 @@ def lookup_ticket():
         
 
         conn = db_connection()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor(row_factory=dict_row)
 
         # Query ticket information with all related data
         query = """
@@ -58,7 +60,7 @@ def lookup_ticket():
             WHERE t.serial_number = %s AND a.phone = %s
         """
 
-        cursor.execute(query, (serial_number, phone))
+        cursor.execute(query, (serial_number, str(phone)))
         rows = cursor.fetchall()
 
         if not rows:
@@ -117,5 +119,7 @@ def lookup_ticket():
             'error': str(e)
         }), 500
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()

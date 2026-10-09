@@ -2,7 +2,7 @@ from datetime import time as dt_time, timedelta
 
 from flask import Blueprint, request, jsonify
 
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 
 routes_bp = Blueprint("routes", __name__)
 
@@ -31,7 +31,7 @@ def _format_duration_value(duration_value):
 def get_routes():
     """Get all routes with station and operator information"""
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         query = """
             SELECT 
@@ -51,7 +51,7 @@ def get_routes():
             INNER JOIN operator o ON rt.operator_id = o.operator_id
             INNER JOIN station ds ON rt.station_id = ds.station_id
             INNER JOIN station das ON rt.arrival_station = das.station_id
-            LEFT JOIN fare f ON rt.route_id = f.route_id AND f.valid_to >= CURDATE()
+            LEFT JOIN fare f ON rt.route_id = f.route_id AND f.valid_to >= CURRENT_DATE
             GROUP BY rt.route_id, rt.distance, rt.default_duration_time, rt.operator_id,
                      o.brand_name, ds.station_id, ds.city, ds.station_name,
                      das.station_id, das.city, das.station_name
@@ -146,10 +146,10 @@ def create_route():
         # Insert new route
         insert_query = """
             INSERT INTO routetrip (station_id, arrival_station, distance, default_duration_time, operator_id)
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s) RETURNING route_id
         """
         cursor.execute(insert_query, (departure_station_id, arrival_station_id, distance, default_duration_time, operator_id))
-        route_id = cursor.lastrowid
+        route_id = cursor.fetchone()[0]
         
         # Create fare entry if price is provided
         if price is not None:

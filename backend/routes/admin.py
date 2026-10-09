@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime, date
 import re
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
+from utils.bookings import create_booking
 import datetime
 from utils.jwt_helper import token_required
 
@@ -33,7 +34,7 @@ def is_valid_email(email: str) -> bool:
 @admin_bp.route("/stations", methods=["GET"])
 def get_stations():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT * FROM station")
         result = cursor.fetchall()
@@ -207,7 +208,7 @@ def del_stations(station_id):
 @admin_bp.route("/operators", methods=["GET"])
 def get_operators():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT * FROM operator")
         result = cursor.fetchall()
@@ -236,11 +237,11 @@ def add_operator():
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO operator(legal_name,brand_name,brand_email,tax_id) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO operator(legal_name,brand_name,brand_email,tax_id) VALUES (%s, %s, %s, %s) RETURNING operator_id",
             (legal_name, brand_name, brand_email, tax_id)
         )
         conn.commit()
-        operator_id = cursor.lastrowid
+        operator_id = cursor.fetchone()[0]
         return jsonify({
             "status": "created",
             "operator": {
@@ -262,9 +263,9 @@ def add_operator():
 @admin_bp.route("/passengers", methods=["GET"])
 def get_customers():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
-        cursor.execute("SELECT p.*,c.passenger_id FROM person p join passenger c on p.person_id = c.passenger_id") 
+        cursor.execute("SELECT p.*,c.passenger_id FROM person p join passenger c on p.person_id = c.person_id")
         result = cursor.fetchall()
         return jsonify(result)
     finally:
@@ -273,7 +274,7 @@ def get_customers():
 @admin_bp.route("/passengers/<int:passenger_id>/account-info", methods=["GET"])
 def get_cus_acc_info(passenger_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT 1 FROM passenger where passenger_id = %s",(passenger_id,))
         if cursor.fetchone() is None:
@@ -343,9 +344,9 @@ def update_passenger_account_status(passenger_id):
 @admin_bp.route("/staffs", methods=["GET"])
 def get_staffs():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
-        cursor.execute("SELECT p.*,s.staff_id FROM person p join staff s on p.person_id = s.staff_id")
+        cursor.execute("SELECT p.*,s.staff_id FROM person p join staff s on p.person_id = s.person_id")
         result = cursor.fetchall()
         return jsonify(result)
     finally:
@@ -354,7 +355,7 @@ def get_staffs():
 @admin_bp.route("/staffs/<int:staff_id>/account-info", methods=["GET"])
 def get_staff_acc_info(staff_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT 1 FROM staff where staff_id = %s",(staff_id,))
         if cursor.fetchone() is None:
@@ -384,7 +385,7 @@ def update_staff_account_status(staff_id):
 
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT 1 FROM staff WHERE staff_id = %s", (staff_id,))
         if cursor.fetchone() is None:
@@ -442,7 +443,7 @@ def del_operators(operator_id):
 @admin_bp.route("/trips", methods=["GET"])
 def get_trips():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT * FROM trip")
         result = cursor.fetchall()
@@ -469,7 +470,7 @@ def add_trips():
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "CALL sp_schedule_trip(%s,%s,%s, @trip_id)",
+            "SELECT sp_schedule_trip(%s::timestamp, %s::integer, %s::integer)",
             (service_date,bus_id,route_id)
         )
         conn.commit()
@@ -524,7 +525,7 @@ def patch_trip(trip_id):
         return jsonify({"error": "no_valid_fields"}), 400
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check trip tồn tại
         cursor.execute("SELECT trip_id FROM trip WHERE trip_id = %s", (trip_id,))
@@ -565,7 +566,7 @@ def patch_trip(trip_id):
 @admin_bp.route("/trips/<int:trip_id>", methods=["DELETE"])
 def del_trip(trip_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
 
     try:
         # Check xem trip co ton tai
@@ -589,7 +590,7 @@ def del_trip(trip_id):
 @admin_bp.route("/trips/<int:trip_id>/seats", methods=["GET"])
 def get_trip_seats(trip_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # 1. Lấy capacity của bus cho trip này
         cursor.execute("""
@@ -635,9 +636,9 @@ def get_trip_seats(trip_id):
 @admin_bp.route("/routes", methods=["GET"])
 def get_route():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
-        cursor.execute("SELECT * FROM defaultdb.routetrip")
+        cursor.execute("SELECT * FROM routetrip")
         result = cursor.fetchall()
         for i in result:
             if isinstance(i.get("default_duration_time"), (datetime.time, datetime.timedelta)):
@@ -676,17 +677,17 @@ def create_route():
         return jsonify({"error": "invalid_time_format", "expected": "HH:MM:SS"}), 400
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Insert vào routetrip
         sql = """
             INSERT INTO routetrip (default_duration_time, distance, station_id, operator_id,arrival_station)
-            VALUES (%s, %s, %s, %s,%s)
+            VALUES (%s, %s, %s, %s,%s) RETURNING route_id
         """
         cursor.execute(sql, (time_str, distance, station_id, operator_id,arrival_station))
         conn.commit()
 
-        new_id = cursor.lastrowid
+        new_id = cursor.fetchone()["route_id"]
 
         return jsonify({
             "route_id": new_id,
@@ -727,7 +728,7 @@ def update_route(route_id):
 
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check route tồn tại
         cursor.execute("SELECT 1 FROM routetrip WHERE route_id = %s", (route_id,))
@@ -773,7 +774,7 @@ def update_route(route_id):
 @admin_bp.route("/routes/<int:route_id>", methods=["DELETE"])
 def del_route(route_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
 
     try:
         # Check xem route co ton tai
@@ -794,7 +795,7 @@ def del_route(route_id):
 @admin_bp.route("/bookings", methods=["GET"])
 def get_bookings():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT * FROM booking")
         result = cursor.fetchall()
@@ -824,133 +825,25 @@ def create_booking_with_multiple_tickets():
     seat_codes = [str(s) for s in seat_codes]
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
     try:
-        conn.start_transaction()
-
-        # 2. Lấy thông tin trip + bus
-        cursor.execute("""
-            SELECT t.trip_id, t.route_id, b.capacity
-            FROM trip t
-            JOIN bus b ON t.bus_id = b.bus_id
-            WHERE t.trip_id = %s
-        """, (trip_id,))
-        trip_row = cursor.fetchone()
-        if not trip_row:
-            return jsonify({"error": "trip_not_found"}), 404
-
-        route_id = trip_row["route_id"]
-        capacity = trip_row["capacity"]
-
-        # 3. Lấy thông tin fare
-        cursor.execute("""
-            SELECT route_id, seat_price
-            FROM fare
-            WHERE fare_id = %s
-        """, (fare_id,))
-        fare_row = cursor.fetchone()
-        if not fare_row:
-            return jsonify({"error": "fare_not_found"}), 404
-
-        fare_route_id = fare_row["route_id"]
-        seat_price    = fare_row["seat_price"]
-
-        # Check route match
-        if route_id != fare_route_id:
-            return jsonify({"error": "fare_route_mismatch"}), 400
-
-        # (Optional) Nếu bạn vẫn chỉ dùng số 1..capacity nhưng lưu string,
-        # có thể check như này:
-        invalid_seats = []
-        for s in seat_codes:
-            if s.isdigit():
-                num = int(s)
-                if num < 1 or num > capacity:
-                    invalid_seats.append(s)
-            else:
-                # Nếu bạn cho phép mã kiểu "A01", bỏ check này hoặc custom thêm
-                pass
-
-        if invalid_seats:
-            return jsonify({
-                "error": "invalid_seat_code",
-                "invalid_seats": invalid_seats
-            }), 400
-
-        # 4. Kiểm tra trùng ghế với ticket đang Issued/Used
-        format_strings = ",".join(["%s"] * len(seat_codes))
-        cursor.execute(f"""
-            SELECT seat_code
-            FROM ticket
-            WHERE trip_id = %s
-              AND seat_code IN ({format_strings})
-              AND ticket_status IN ('Issued', 'Used')
-        """, (trip_id, *seat_codes))
-        taken_rows = cursor.fetchall()
-        if taken_rows:
-            taken = [r["seat_code"] for r in taken_rows]
-            return jsonify({
-                "error": "seat_already_taken",
-                "taken_seats": taken
-            }), 400
-
-        # 5. Tạo booking (total_amount tạm = 0, sẽ cập nhật sau)
-        cursor.execute("""
-            INSERT INTO booking (currency, total_amount, account_id, operator_id)
-            VALUES (%s, 0, %s, %s)
-        """, (currency, account_id, operator_id))
-        booking_id = cursor.lastrowid
-
-        # 6. Tạo tickets
-        ticket_ids = []
-        for s in seat_codes:
-            cursor.execute("""
-                INSERT INTO ticket (
-                    trip_id,
-                    account_id,
-                    booking_id,
-                    fare_id,
-                    qr_code_link,
-                    ticket_status,
-                    seat_price,
-                    seat_code
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                trip_id,
-                account_id,
-                booking_id,
-                fare_id,
-                None,              # qr_code_link: tạm để None
-                "Issued",
-                seat_price,
-                s                  # seat_code là VARCHAR
-            ))
-            ticket_ids.append(cursor.lastrowid)
-
-        # 7. Cập nhật total_amount sử dụng fn_calculate_booking_total
-        cursor.execute("""
-            UPDATE booking
-            SET total_amount = fn_calculate_booking_total(%s)
-            WHERE booking_id = %s
-        """, (booking_id, booking_id))
-
+        booking_id, ticket_serials = create_booking(
+            conn, currency, account_id, operator_id, trip_id, fare_id, seat_codes
+        )
         conn.commit()
-
         return jsonify({
             "booking_id": booking_id,
-            "ticket_ids": ticket_ids,
+            "ticket_ids": [ticket["ticket_id"] for ticket in ticket_serials],
+            "ticket_serials": ticket_serials,
             "seat_codes": seat_codes,
-            "currency": currency
+            "currency": currency,
         }), 201
-
-    except Exception as e:
+    except Exception as exc:
         conn.rollback()
-        print("Error in create_booking_with_multiple_tickets:", e)
-        return jsonify({"error": "internal_server_error", "details": str(e)}), 500
+        status = 400 if getattr(exc, "sqlstate", None) in ("P0001", "23505", "23503") else 500
+        return jsonify({"error": "booking_failed", "details": str(exc).splitlines()[0]}), status
     finally:
-        cursor.close()
         conn.close()
+
 
 @admin_bp.route("/bookings/<int:booking_id>", methods=["PATCH"])
 def patch_booking(booking_id):
@@ -963,7 +856,7 @@ def patch_booking(booking_id):
         return jsonify({"error": "no_valid_fields"}), 400
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check booking tồn tại
         cursor.execute("SELECT booking_id FROM booking WHERE booking_id = %s", (booking_id,))
@@ -995,7 +888,7 @@ def patch_booking(booking_id):
 @admin_bp.route("/bookings/<int:booking_id>", methods=["DELETE"])
 def del_booking(booking_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
 
     try:
         # Check xem route co ton tai
@@ -1018,7 +911,7 @@ def del_booking(booking_id):
 @admin_bp.route("/buses", methods=["GET"])
 def get_buses():
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("SELECT * FROM bus")
         result = cursor.fetchall()
@@ -1041,7 +934,7 @@ def create_bus():
     if capacity > 60:
         return jsonify({"error":"capacity_to_large"})
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
 
 
     try:
@@ -1136,7 +1029,7 @@ def get_fares():
     route_id = request.args.get("route_id", type=int)
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         if route_id is not None:
             cursor.execute("""
@@ -1165,7 +1058,7 @@ def get_fares():
 @admin_bp.route("/fares/<int:fare_id>", methods=["GET"])
 def get_fare_detail(fare_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("""
             SELECT fare_id, currency, discount, valid_from, valid_to,
@@ -1230,7 +1123,7 @@ def create_fare():
 
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Kiểm tra route tồn tại
         cursor.execute("SELECT 1 FROM routetrip WHERE route_id = %s", (route_id_int,))
@@ -1243,7 +1136,7 @@ def create_fare():
             INSERT INTO fare (
                 currency, discount, valid_from, valid_to, taxes,
                 route_id, surcharges, base_fare, seat_price, seat_class
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING fare_id
             """,
             (
                 currency,
@@ -1260,7 +1153,7 @@ def create_fare():
         )
         conn.commit()
 
-        fare_id = cursor.lastrowid
+        fare_id = cursor.fetchone()["fare_id"]
 
         # Lấy lại fare vừa tạo
         cursor.execute(
@@ -1333,7 +1226,7 @@ def patch_fare(fare_id):
 
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Ensure fare exists
         cursor.execute("SELECT 1 FROM fare WHERE fare_id = %s", (fare_id,))
@@ -1385,7 +1278,7 @@ def get_tickets():
     status     = request.args.get("status")  # Issued, Used, Refunded, Cancelled
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         base_sql = """
             SELECT
@@ -1434,7 +1327,7 @@ def get_tickets():
 @admin_bp.route("/tickets/<int:ticket_id>", methods=["GET"])
 def get_ticket_detail(ticket_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("""
             SELECT
@@ -1471,14 +1364,13 @@ def get_ticket_detail(ticket_id):
 @admin_bp.route("/tickets/<int:ticket_id>/refund", methods=["POST"])
 def refund_ticket(ticket_id):
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Gọi stored procedure
-        cursor.execute("CALL sp_refund_ticket(%s)", (ticket_id,))
+        cursor.execute("SELECT sp_refund_ticket(%s)", (ticket_id,))
+        conn.commit()
 
-        # Nếu SP ném SIGNAL SQLSTATE '45000', mysql-connector sẽ raise exception,
-        # bạn có thể catch để trả lỗi đẹp hơn.
-        # Nhưng ở đây mình để chung trong except.
+        # PostgreSQL raises an exception if the refund violates a business rule.
 
         # Lấy lại info ticket sau khi refund
         cursor.execute("""
@@ -1575,7 +1467,7 @@ def add_ticket_to_booking(booking_id):
         return jsonify({"error": "seat_codes_must_be_list"}), 400
 
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check booking exists + get account_id
         cursor.execute(
@@ -1610,10 +1502,12 @@ def add_ticket_to_booking(booking_id):
             cursor.execute("""
                 INSERT INTO ticket (trip_id, account_id, booking_id, fare_id, 
                                     ticket_status, seat_price, seat_code)
-                VALUES (%s, %s, %s, %s, 'Issued', %s, %s)
+                VALUES (%s, %s, %s, %s, 'Issued', %s, %s) RETURNING ticket_id
             """, (trip_id, account_id, booking_id, fare_id, seat_price, seat))
-            created_ids.append(cursor.lastrowid)
+            created_ids.append(cursor.fetchone()["ticket_id"])
 
+        cursor.execute("UPDATE booking SET total_amount = fn_calculate_booking_total(%s) WHERE booking_id = %s",
+                       (booking_id, booking_id))
         conn.commit()
 
         return jsonify({

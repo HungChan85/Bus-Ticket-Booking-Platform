@@ -1,147 +1,152 @@
-# 🚌 Bus Ticket Booking Platform
+# VietBus — Bus Ticket Booking Platform
 
-<!-- ================================================================= -->
-<!-- USER CONTENT: Project Overview, Objectives, Personal Context      -->
-<!-- ================================================================= -->
-## 📌 Project Overview
+A bus ticket booking application built with React + Vite, Flask, and PostgreSQL. The demo runs locally with Docker Compose and requires no cloud database, cloud account, or custom configuration file.
 
-<!-- Add a brief project summary, problem statement, and target audience here -->
-> *An online bus ticket booking platform that enables users to search routes, browse trips, select seats in real-time, manage bookings, and view e-tickets.*
+## Run the demo after cloning
 
----
+Install and start Docker Desktop with Linux containers, or use Docker Engine with Compose v2. From the repository root:
 
-## 🏗️ System Architecture
-
-The application adopts an **N-Tier Client-Server Architecture** decoupling the Frontend UI, Backend REST API, and Relational Database layer:
+```bash
+git clone https://github.com/HungChan85/Bus-Ticket-Booking-Platform.git
+cd Bus-Ticket-Booking-Platform
+docker compose up --build -d --wait
 ```
-┌──────────────────────────────────────────────────────────┐
-│                   Frontend (SPA Client)                  │
-│       HTML5, CSS3, JavaScript (Vanilla ES6+), Nginx      │
-└────────────────────────────┬─────────────────────────────┘
-│  HTTP / REST API (JSON)
-▼
-┌──────────────────────────────────────────────────────────┐
-│                   Backend (REST API Engine)              │
-│       Python (Flask Application Factory Pattern)         │
-│  - Blueprints: Auth, Trips, Routes, Booking, Ticket, etc.│
-│  - Security: JWT Authentication, Password Hashing        │
-└────────────────────────────┬─────────────────────────────┘
-│  PyMySQL / Connection Pool
-▼
-┌──────────────────────────────────────────────────────────┐
-│                   Database Layer (RDBMS)                 │
-│         MySQL 8.0 (Relational Database / Cloud DB)       │
-└──────────────────────────────────────────────────────────┘
+
+The first run requires Internet access to download images and dependencies. Compose starts services in this order: healthy PostgreSQL → migrations → seed data → healthy backend → frontend.
+
+- Website: http://localhost:5173
+- Admin login: http://localhost:5173/admin/login
+- API/database health check: http://localhost:9000/health
+- Local PostgreSQL: localhost:5432; database/user `vietbus`, password `vietbus_demo`.
+
+You do not need to create `backend/.env` when using Compose. The default settings are intended for the local demo.
+
+## Demo accounts and sample data
+
+| Role | Email | Password |
+| --- | --- | --- |
+| Passenger | passenger@example.com | user123 |
+| Second passenger | passenger2@example.com | user123 |
+| Admin | admin@example.com | admin123 |
+| FUTA staff | staff.futa@example.com | staff123 |
+| Thanh Buoi staff | staff.thanhbuoi@example.com | staff123 |
+
+Select Passenger or Staff on the standard login page. Administrators use the admin login page.
+
+The seed includes 3 operators, 6 stations, 7 buses, 9 routes, valid fares, and trips from today through the next 7 days (216 trips on a fresh database). Try searching for **Ben Xe Mien Dong → Ben Xe Lien Tinh Da Lat** tomorrow, selecting seats, and making a booking.
+
+The first passenger account has 2 sample tickets for tomorrow's trip. View them in Profile. On a freshly initialized database, you can also look up tickets using serial number `10000000` or `10000001` and phone number `0900000004`.
+
+Business dates and times use `Asia/Ho_Chi_Minh`. At backend startup and daily thereafter, the scheduler adds trips for the next 7 days. Trip statuses are updated every minute. Seed passwords are stored as bcrypt hashes.
+
+## Stop, restart, and manage the database
+
+```bash
+# Stop the application; database data remains in the named volume
+docker compose down
+
+# Start it again
+docker compose up -d --wait
+
+# Inspect service status and logs
+docker compose ps -a
+docker compose logs db-init backend
+
+# View applied migrations
+docker compose run --rm db-init python database/manage.py status
+
+# Apply new migrations
+docker compose run --rm db-init python database/manage.py migrate
+
+# Run the seed again and refresh upcoming trips while preserving existing data
+docker compose run --rm db-init python database/manage.py seed
+
+# Connect to PostgreSQL using psql inside the container
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
-## 🛠️ Tech Stack
 
-### Backend
-* **Language & Runtime:** Python 3.10+
-* **Framework:** Flask (utilizing the *Application Factory Pattern* and *Blueprints*)
-* **Database Driver:** `PyMySQL`, `mysql-connector-python`
-* **Authentication & Security:** JWT (`PyJWT`), `werkzeug.security` (Password Hashing), SSL CA Cert
-* **CORS & Utilities:** `flask-cors`, `python-dotenv`
+Migrations are tracked by version and checksum, and the seed records its initialization history. Repeating these commands does not duplicate the sample dataset or delete bookings, tickets, or changed passwords.
 
-### Frontend
-* **Core:** HTML5, CSS3, JavaScript (ES6 Modules)
-* **Styling & Assets:** Custom Responsive CSS, Vector Assets, Image banners
-* **Web Server (Production Container):** Nginx Alpine
+To **delete this project's entire demo database and recreate it from scratch**, run:
 
-### DevOps & Database
-* **Database:** MySQL 8.0
-* **Containerization:** Docker, Docker Compose (Multi-container orchestration)
-
----
-
-## 🗄️ Database Design
-
-The relational database is normalized and modeled based on the following Entity-Relationship structure:
-
-![ER diagram](database\Entity-relationship-diagram.png)
-
-### Core Entities:
-* `users`: Stores customer and admin profiles along with securely hashed passwords.
-* `routes`: Travel routes including departure point, destination, estimated duration, and distance.
-* `trips`: Specific scheduled trips with departure times, ticket pricing, and assigned vehicle/driver details.
-* `bus_seats`: Real-time seat inventory for each trip (available, reserved, booked).
-* `bookings`: Booking transactions, total fare, payment methods, and status.
-* `tickets`: E-ticket records linked with unique QR codes for boarding verification.
-
----
-
-## 🔌 API Endpoints Specification
-
-All API endpoints accept and return payloads formatted in `application/json`.
-
-
-### 1. Authentication (`/api/auth`)
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Public | Register a new user account |
-| `POST` | `/api/auth/login` | Public | Authenticate user and receive Bearer JWT |
-| `GET` | `/api/auth/me` | Authenticated | Retrieve current user profile |
-
-### 2. Routes & Trips (`/api/routes`, `/api/trips`)
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/routes` | Public | List all available routes |
-| `GET` | `/api/trips/search` | Public | Query trips by date, origin, and destination |
-| `GET` | `/api/trips/<trip_id>` | Public | Get trip details and real-time seat layout |
-
-### 3. Booking & Tickets (`/api/booking`, `/api/ticket`)
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/booking/create` | Authenticated | Create a new booking and hold selected seats |
-| `GET` | `/api/booking/history` | Authenticated | Fetch booking history for the current user |
-| `GET` | `/api/ticket/<ticket_id>` | Authenticated | Retrieve e-ticket data & QR validation code |
-| `POST` | `/api/booking/cancel` | Authenticated | Cancel a booking according to policy |
-
-### 4. Admin Management (`/api/admin`)
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/admin/trips` | Admin | Create a new scheduled trip |
-| `PUT` | `/api/admin/trips/<id>` | Admin | Update trip information or status |
-| `GET` | `/api/admin/reports` | Admin | Access revenue and seat occupancy metrics |
-
----
-
-## 🚀 Setup & Installation Guide
-
-### Option 1: Quickstart with Docker Compose (Recommended)
-
-Requires [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/) installed.
-
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/HungChan85/Bus-Ticket-Booking-Platform.git](https://github.com/HungChan85/Bus-Ticket-Booking-Platform.git)
-   cd Bus-Ticket-Booking-Platform
-
-
-
-
-## 📂 Project Structure
-
+```bash
+docker compose down -v
+docker compose up --build -d --wait
 ```
-Bus-Ticket-Booking-Platform/
-├── backend/
-│   ├── routes/              # Blueprint modules (auth, booking, trips, admin, etc.)
-│   ├── utils/               # Database connectors, JWT helpers, validators
-│   ├── app.py               # Main Flask entry point
-│   ├── config.py            # Environment configurations
-│   ├── factory.py           # Application Factory initialization
-│   ├── requirements.txt     # Python dependencies
-│   ├── .env.example         # Environment template file
-│   └── Dockerfile           # Backend container build recipe
-├── frontend/
-│   ├── assets/              # Images, icons, design assets
-│   ├── css/ & js/           # Client-side styles and modular scripts
-│   ├── index.html           # Main SPA entry point
-│   └── Dockerfile           # Frontend Nginx static build recipe
-├── database/
-│   ├── schema.sql           # Database schema definition (DDL)
-│   ├── seed.sql             # Seed data for testing and mock records
-│   └── Entity-relationship-diagram.png
-├── docker-compose.yml       # Multi-container orchestration
-└── README.md
+
+## Optional configuration
+
+Copy the root `.env.example` to `.env` to customize ports, credentials, or secrets. In PowerShell:
+
+```powershell
+Copy-Item .env.example .env
 ```
+
+If you change `BACKEND_PORT`, update `VITE_API_URL` to the backend address accessible from your browser, such as `http://localhost:9001`. When accessing the demo from another computer on your network, use the Docker host's hostname or IP address in `VITE_API_URL`.
+
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` initialize PostgreSQL only when the volume is empty. Changing these variables does not automatically update accounts in an existing database.
+
+## Run the backend and frontend locally
+
+Use Python 3.10+ and Node 22.12+. From the repository root:
+
+```bash
+docker compose up -d postgres
+python -m venv .venv
+```
+
+Activate the virtual environment: Windows PowerShell `.\.venv\Scripts\Activate.ps1`; macOS/Linux `source .venv/bin/activate`. Then run:
+
+```bash
+pip install -r backend/requirements.txt
+python database/manage.py init
+python backend/app.py
+```
+
+Open a second terminal:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+To customize the local backend connection, copy `backend/.env.example` to `backend/.env`. If set, `DATABASE_URL` takes precedence over the `DB_*` settings. Environment variables provided by Compose take precedence over this file.
+
+## Validation
+
+Integration tests use a real PostgreSQL server and create and remove a separate database for each test. They do not reset the demo database. The connection role needs CREATEDB permission, which the default Compose role has.
+
+```bash
+docker compose run --rm db-init python -m unittest discover -s backend/tests -v
+```
+
+Alternatively, use your local virtual environment with PostgreSQL running:
+
+```bash
+python -m unittest discover -s backend/tests -v
+cd frontend
+npm run build
+```
+
+The checks cover repeatable migrations and seeding, rollback after failed migrations or bookings, registration and login, trip search, concurrent seat bookings, refunds, and administrative operations.
+
+## Project structure
+
+```text
+backend/
+  routes/               Flask API blueprints
+  utils/database.py     Psycopg PostgreSQL connector
+  utils/bookings.py     Shared transactional booking calls
+  trip_maintenance.py   Demo trip generation and status scheduler
+  tests/                PostgreSQL integration tests
+database/
+  migrations/           Ordered, versioned PostgreSQL SQL files
+  manage.py             init / migrate / seed / status commands
+  seed.py               Idempotent demo dataset
+frontend/               React + Vite
+docker-compose.yml      postgres → db-init → backend → frontend
+```
+
+See the [database and migrations guide](database/README.md), [backend API documentation](backend/README.md), and [ER diagram](database/Entity-relationship-diagram.png). The ER diagram shows the original data model; migrations define the current schema.
 

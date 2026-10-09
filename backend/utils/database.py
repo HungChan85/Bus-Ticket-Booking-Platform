@@ -1,26 +1,31 @@
-from datetime import datetime, date
-import mysql.connector
+"""PostgreSQL connections shared by the API, migrations and demo seed."""
 import os
-from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+import psycopg
+from dotenv import load_dotenv
+from psycopg.rows import dict_row
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 
 def db_connection():
-    current_file_path = os.path.abspath(__file__) 
-    backend_dir = os.path.dirname(os.path.dirname(current_file_path)) 
-    ssl_cert_path = os.path.join(backend_dir, "ca.pem")
-
-    db_config = {
-        "host": os.getenv("DB_HOST"),
-        "port": os.getenv("DB_PORT"),
-        "user": os.getenv("DB_USER"),
-        "password": os.getenv("DB_PASSWORD"),
-        "database": os.getenv("DB_NAME"),
+    # Container environment takes precedence over an optional local .env file.
+    settings = {
+        "connect_timeout": 10,
+        "options": "-c timezone=" + os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh"),
     }
+    if os.getenv("DATABASE_URL"):
+        return psycopg.connect(os.environ["DATABASE_URL"], **settings)
+    return psycopg.connect(
+        host=os.getenv("DB_HOST", "127.0.0.1"),
+        port=int(os.getenv("DB_PORT", "5432")),
+        user=os.getenv("DB_USER", "vietbus"),
+        password=os.getenv("DB_PASSWORD", "vietbus_demo"),
+        dbname=os.getenv("DB_NAME", "vietbus"),
+        sslmode=os.getenv("DB_SSLMODE", "prefer"),
+        **settings,
+    )
 
-    # Chỉ dùng SSL nếu không phải localhost (hoặc dựa vào biến môi trường khác)
-    if os.getenv("DB_HOST") != "127.0.0.1" and os.getenv("DB_HOST") != "localhost":
-        db_config["ssl_ca"] = ssl_cert_path
-        db_config["ssl_verify_cert"] = True
 
-    return mysql.connector.connect(**db_config)
+__all__ = ["db_connection", "dict_row"]

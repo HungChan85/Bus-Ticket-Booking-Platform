@@ -2,7 +2,7 @@ from datetime import date, datetime, time as dt_time, timedelta
 
 from flask import Blueprint, request, jsonify
 
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 
 trips_bp = Blueprint("trips", __name__)
 
@@ -52,7 +52,7 @@ def _format_duration_label(duration_value):
 def get_trips():
     """Get all trips with route, bus, and operator information"""
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Get optional filters
         filter_date = request.args.get("date")
@@ -185,14 +185,10 @@ def create_trip():
         if cursor.fetchone() is None:
             return jsonify({"error": "Route not found"}), 404
         
-        # Call stored procedure to schedule trip
-        cursor.execute("SET @trip_id = NULL")
+        # PostgreSQL functions return the generated ID directly.
         cursor.execute("""
-            CALL sp_schedule_trip(%s, %s, %s, @trip_id)
+            SELECT sp_schedule_trip(%s::timestamp, %s::integer, %s::integer)
         """, (service_date_obj, bus_id, route_id))
-        
-        # Get the output trip_id
-        cursor.execute("SELECT @trip_id AS trip_id")
         result = cursor.fetchone()
         trip_id = result[0] if result else None
         
@@ -329,7 +325,7 @@ def delete_trip(trip_id):
 def get_booked_seats(trip_id):
     """Get booked seats for a trip - simple endpoint for seat selector"""
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check if trip exists
         cursor.execute("SELECT trip_id FROM trip WHERE trip_id = %s", (trip_id,))
@@ -364,7 +360,7 @@ def get_booked_seats(trip_id):
 def get_trip_seats(trip_id):
     """Get available seats for a trip"""
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         # Check if trip exists
         cursor.execute("SELECT trip_id FROM trip WHERE trip_id = %s", (trip_id,))
@@ -417,7 +413,7 @@ def get_trip_seats(trip_id):
 def get_active_buses():
     """Get all active buses - public endpoint for trip scheduling"""
     conn = db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(row_factory=dict_row)
     try:
         cursor.execute("""
             SELECT 

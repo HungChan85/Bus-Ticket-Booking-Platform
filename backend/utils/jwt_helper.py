@@ -24,7 +24,7 @@ def _get_exp_seconds() -> int:
 def generate_token(payload: dict, expires_in: Optional[int] = None) -> str:
     """Generate a signed JWT with an expiration."""
     exp_seconds = expires_in if expires_in is not None else _get_exp_seconds()
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     to_encode = {**payload, "iat": now, "exp": now + datetime.timedelta(seconds=exp_seconds)}
     token = jwt.encode(to_encode, _get_secret(), algorithm=_get_algorithm())
     return token

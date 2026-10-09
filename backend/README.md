@@ -22,9 +22,9 @@ The backend follows a modular **Blueprint** architecture with clear separation o
 
 - **Application Factory Pattern**: `factory.py` centralizes app creation and configuration
 - **Blueprint-based Routing**: Each domain (auth, trips, bookings) has its own route module
-- **Database Layer**: `utils/database.py` handles MySQL connection pooling
+- **Database Layer**: `utils/database.py` opens PostgreSQL connections with Psycopg
 - **JWT Authentication**: `utils/jwt_helper.py` provides token generation and validation
-- **Stored Procedure Integration**: Leverages MySQL stored procedures for complex business logic
+- **Database Functions**: PostgreSQL functions centralize transactional business logic
 
 ---
 
@@ -33,7 +33,7 @@ The backend follows a modular **Blueprint** architecture with clear separation o
 | Technology | Version | Purpose |
 |------------|---------|---------|
 | **Flask** | Latest | Web framework for RESTful API |
-| **MySQL Connector** | `mysql-connector-python` | Database driver for MySQL connectivity |
+| **Psycopg** | 3.2.10 | PostgreSQL driver |
 | **PyJWT** | Latest | JWT token encoding/decoding for authentication |
 | **Flask-CORS** | Latest | Cross-Origin Resource Sharing support |
 | **Python Dotenv** | Latest | Environment variable management |
@@ -65,7 +65,7 @@ backend/
 │
 └── utils/                  # Shared utilities
     ├── __init__.py
-    ├── database.py        # MySQL connection management
+    ├── database.py        # PostgreSQL connection management
     └── jwt_helper.py      # JWT token utilities and decorators
 ```
 
@@ -73,61 +73,37 @@ backend/
 
 ## Setup & Installation
 
-### Prerequisites
-- Python 3.8+
-- MySQL 8.0+
-- Virtual environment tool (venv or virtualenv)
+Use the [root quickstart](../README.md) for the complete Docker demo:
 
-### Installation Steps
+```bash
+docker compose up --build -d --wait
+```
 
-1. **Navigate to backend directory:**
-   ```bash
-   cd backend
-   ```
+For a local backend, run these commands from the repository root with Python 3.10+:
 
-2. **Create and activate virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+docker compose up -d postgres
+python -m venv .venv
+# Activate .venv (see the root README for Windows/macOS/Linux commands)
+pip install -r backend/requirements.txt
+python database/manage.py init
+python backend/app.py
+```
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+The API listens on `http://localhost:9000`. Connection defaults match Compose's demo database. Optional overrides are in `backend/.env.example`; copy it to `backend/.env` when needed. `DATABASE_URL` overrides `DB_*` settings, and existing environment variables take precedence over the file.
 
-4. **Configure environment variables:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your database credentials
-   ```
+```dotenv
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USER=vietbus
+DB_PASSWORD=vietbus_demo
+DB_NAME=vietbus
+APP_TIMEZONE=Asia/Ho_Chi_Minh
+JWT_SECRET=local-demo-jwt-secret-change-for-production
+FLASK_SECRET=local-demo-flask-secret-change-for-production
+```
 
-   Required variables in `.env`:
-   ```dotenv
-   DB_USER=root
-   DB_PASSWORD=your_password
-   DB_HOST=127.0.0.1
-   DB_NAME=defaultdb
-   DB_PORT=3306
-   
-   FLASK_SECRET=your-secret-key-here
-   JWT_SECRET=your-jwt-secret-here
-   JWT_EXPIRES_IN_SECONDS=86400
-   ```
-
-5. **Initialize database:**
-   ```bash
-   # Run schema.sql and seed.sql from ../database/ directory
-   mysql -u root -p defaultdb < ../database/schema.sql
-   mysql -u root -p defaultdb < ../database/seed.sql
-   ```
-
-6. **Run the application:**
-   ```bash
-   python app.py
-   ```
-
-   Server starts at: `http://localhost:9000`
+Default passenger login: `passenger@example.com` / `user123`; admin login: `admin@example.com` / `admin123`. See the root README for all demo accounts.
 
 ---
 
@@ -313,15 +289,15 @@ Located in `utils/jwt_helper.py`:
 ### Connection Management
 
 `utils/database.py` provides:
-- `db_connection()`: Returns MySQL connection instance
+- `db_connection()`: Returns a Psycopg PostgreSQL connection
 - Automatically loads credentials from environment variables
-- Connection pooling handled by mysql-connector-python
+- Transactions commit explicitly in routes; connection context managers commit on success and roll back on exceptions
 
-### Stored Procedure Usage
+### PostgreSQL Function Usage
 
-The backend extensively uses MySQL stored procedures for data integrity:
+The backend calls PostgreSQL functions with SELECT for data integrity. ID-returning functions replace output parameters:
 
-| Stored Procedure | Usage | File |
+| Function | Usage | File |
 |------------------|-------|------|
 | `sp_create_passenger_account` | User registration | `auth.py` |
 | `sp_create_staff_account` | Staff registration | `auth.py` |
@@ -369,7 +345,7 @@ Defined in `factory.py`:
 
 ### Common Error Scenarios
 
-1. **Database Errors**: MySQL stored procedures throw `SQLSTATE '45000'` for business rule violations
+1. **Database Errors**: PostgreSQL functions raise exceptions for business rule violations; the caller rolls back the transaction
 2. **Authentication Errors**: Invalid/expired tokens return 401 Unauthorized
 3. **Validation Errors**: Missing required fields return 400 Bad Request
 4. **Permission Errors**: Insufficient role access returns 403 Forbidden
@@ -378,18 +354,14 @@ Defined in `factory.py`:
 
 ## Running with Docker
 
-```bash
-# Build image
-docker build -t vietbus-backend .
+Use Compose from the repository root. It waits for PostgreSQL, applies migrations and seeds demo data before starting the API:
 
-# Run container
-docker run -p 9000:9000 \
-  -e DB_HOST=host.docker.internal \
-  -e DB_USER=root \
-  -e DB_PASSWORD=yourpassword \
-  -e DB_NAME=defaultdb \
-  vietbus-backend
+```bash
+docker compose up --build -d --wait
+docker compose logs db-init backend
 ```
+
+See [database migrations](../database/README.md) for schema changes, seed behavior and reset instructions.
 
 ---
 
@@ -407,9 +379,9 @@ docker run -p 9000:9000 \
 ### Database Queries
 
 - Use parameterized queries to prevent SQL injection
-- Prefer stored procedures for complex operations
+- Use PostgreSQL functions for transactional booking operations
 - Always close cursors and connections in `finally` blocks
-- Use `dictionary=True` cursor for easier JSON serialization
+- Use `cursor(row_factory=dict_row)` from `psycopg.rows` for dictionary results; use `INSERT ... RETURNING` for generated IDs
 
 ### Security Best Practices
 
@@ -453,7 +425,7 @@ curl -X POST http://localhost:9000/api/login \
 
 **Search Trips:**
 ```bash
-curl "http://localhost:9000/api/schedule/trips?from=1&to=3&date=2026-02-01"
+curl "http://localhost:9000/api/schedule/trips?station_id=1&destination_id=3&date=YYYY-MM-DD"
 ```
 
 ---
@@ -463,7 +435,7 @@ curl "http://localhost:9000/api/schedule/trips?from=1&to=3&date=2026-02-01"
 ### Common Issues
 
 1. **Connection Refused:**
-   - Check if MySQL server is running
+   - Check if PostgreSQL is running: `docker compose ps`
    - Verify DB credentials in `.env`
    - Check firewall settings
 
@@ -475,9 +447,9 @@ curl "http://localhost:9000/api/schedule/trips?from=1&to=3&date=2026-02-01"
    - Verify Flask-CORS is installed
    - Check allowed origins in CORS configuration
 
-4. **Stored Procedure Errors:**
-   - Ensure database schema and seed files are executed
-   - Check stored procedure parameters match backend calls
+4. **Database Function Errors:**
+   - Run `python database/manage.py init` or inspect `docker compose logs db-init`
+   - Check function parameters match backend calls
 
 ---
 

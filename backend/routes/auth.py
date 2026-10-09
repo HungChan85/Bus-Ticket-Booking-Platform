@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from utils.database import db_connection
+from utils.database import db_connection, dict_row
 import datetime
 from utils.jwt_helper import generate_token
 import bcrypt
@@ -37,9 +37,9 @@ def register():
         cursor = conn.cursor()
 
         if role == "PASSENGER":
-            args = [full_name, dob, gov_id, email, phone, hashed_password, 0]
-            result_args = cursor.callproc('sp_create_passenger_account', args)
-            new_id = result_args[6]
+            cursor.execute("SELECT sp_create_passenger_account(%s, %s::date, %s, %s, %s, %s)",
+                           (full_name, dob, gov_id, email, str(phone), hashed_password))
+            new_id = cursor.fetchone()[0]
 
             conn.commit()
             return jsonify({"success": True, "message": "Registration successful!", "userId": new_id}), 201
@@ -48,9 +48,9 @@ def register():
              hire_date = data.get("hire_date", datetime.date.today())
              operator_id = data.get("operator_id", "OP001")
 
-             args = [full_name, dob, gov_id, email, phone, hashed_password, hire_date, operator_id, 0]
-             result_args = cursor.callproc('sp_create_staff_account', args)
-             new_id = result_args[8]
+             cursor.execute("SELECT sp_create_staff_account(%s, %s::date, %s, %s, %s, %s, %s::date, %s)",
+                            (full_name, dob, gov_id, email, str(phone), hashed_password, hire_date, operator_id))
+             new_id = cursor.fetchone()[0]
 
              conn.commit()
              return jsonify({"success": True, "message": "Staff registration successful!", "userId": new_id}), 201
@@ -78,7 +78,7 @@ def login():
     cursor = None
     try:
         conn = db_connection()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor(row_factory=dict_row)
 
         cursor.execute(
             "SELECT * FROM account WHERE email = %s",

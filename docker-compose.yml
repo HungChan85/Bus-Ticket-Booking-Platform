@@ -1,30 +1,76 @@
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment:
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_USER: ${POSTGRES_USER:-vietbus}
+    DB_PASSWORD: ${POSTGRES_PASSWORD:-vietbus_demo}
+    DB_NAME: ${POSTGRES_DB:-vietbus}
+    DB_SSLMODE: disable
+    APP_TIMEZONE: Asia/Ho_Chi_Minh
+    TZ: Asia/Ho_Chi_Minh
+    JWT_SECRET: ${JWT_SECRET:-local-demo-jwt-secret-change-for-production}
+    FLASK_SECRET: ${FLASK_SECRET:-local-demo-flask-secret-change-for-production}
+
 services:
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: vietbus_backend
-    restart: always
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vietbus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vietbus_demo}
+      POSTGRES_DB: ${POSTGRES_DB:-vietbus}
+      TZ: Asia/Ho_Chi_Minh
+    command: ["postgres", "-c", "timezone=Asia/Ho_Chi_Minh"]
     ports:
-      - "9000:9000"
-    # Inject environment variables from .env file
-    env_file:
-      - ./backend/.env
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      # Mount code for hot reload without rebuilding
-      - ./backend:/app/backend
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  db-init:
+    <<: *backend
+    command: ["python", "database/manage.py", "init"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-9000}:9000"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: vietbus_frontend
-    restart: always
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:5173"
     environment:
-      # Specify API URL pointing to backend
-      VITE_API_URL: http://backend:9000
-    volumes:
-      # Hot reload for frontend
-      - ./frontend/src:/app/src
+      # Requests originate in the browser, which cannot resolve "backend".
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:9000}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
